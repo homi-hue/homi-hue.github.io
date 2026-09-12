@@ -1,0 +1,10 @@
+{
+  "description": "Monitor forest fire risks with real-time data and AI predictions, empowering emergency responders and environmental agencies to act swiftly.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
