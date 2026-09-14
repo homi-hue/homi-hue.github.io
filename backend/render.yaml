@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: homi-hue-flood-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DEVICE_API_KEY
+        sync: false
+      - key: FRONTEND_ORIGINS
+        value: https://homi-hue.github.io
+      - key: DB_PATH
+        value: /tmp/hazard.db
