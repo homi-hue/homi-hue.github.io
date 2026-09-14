@@ -15,19 +15,6 @@ import {
 type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 type NavPage = "Dashboard" | "Live Monitoring" | "Predictions" | "Alerts" | "About";
 
-// ─── Data ────────────────────────────────────────────────────────────────────
-const tempData = history
-  .filter((r) => r.temperature != null)
-  .map((r) => ({ time: new Date(r.timestamp).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}), value: r.temperature }));
-
-const humidityData = history
-  .filter((r) => r.humidity != null)
-  .map((r) => ({ time: new Date(r.timestamp).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}), value: r.humidity }));
-
-const riskData = history
-  .filter((r) => r.risk?.score != null)
-  .map((r) => ({ time: new Date(r.timestamp).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}), value: r.risk.score }));
-
 const alerts = [
   {
     id: 1,
@@ -293,6 +280,19 @@ export default function App() {
   const [history, setHistory] = useState<any[]>([]);
   const [backendOnline, setBackendOnline] = useState(false);
   const [error, setError] = useState("");
+
+  // Build chart data from the backend history.
+  const tempData = history
+    .filter((r) => r.temperature != null)
+    .map((r) => ({ time: new Date(r.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), value: r.temperature }));
+
+  const humidityData = history
+    .filter((r) => r.humidity != null)
+    .map((r) => ({ time: new Date(r.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), value: r.humidity }));
+
+  const riskData = history
+    .filter((r) => r.risk?.score != null)
+    .map((r) => ({ time: new Date(r.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), value: r.risk.score }));
 
   const temperature = reading?.temperature ?? null;
   const humidity = reading?.humidity ?? null;
