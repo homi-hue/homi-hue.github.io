@@ -16,38 +16,23 @@ type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 type NavPage = "Dashboard" | "Live Monitoring" | "Predictions" | "Alerts" | "About";
 
 // ─── Data ────────────────────────────────────────────────────────────────────
-const tempData = [
-  { time: "06:00", value: 24 }, { time: "07:00", value: 26 },
-  { time: "08:00", value: 28 }, { time: "09:00", value: 30 },
-  { time: "10:00", value: 32 }, { time: "11:00", value: 35 },
-  { time: "12:00", value: 37 }, { time: "13:00", value: 39 },
-  { time: "14:00", value: 41 }, { time: "15:00", value: 39 },
-  { time: "16:00", value: 36 }, { time: "17:00", value: 33 },
-];
+const tempData = history
+  .filter((r) => r.temperature != null)
+  .map((r) => ({ time: new Date(r.timestamp).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}), value: r.temperature }));
 
-const humidityData = [
-  { time: "06:00", value: 68 }, { time: "07:00", value: 62 },
-  { time: "08:00", value: 55 }, { time: "09:00", value: 48 },
-  { time: "10:00", value: 40 }, { time: "11:00", value: 33 },
-  { time: "12:00", value: 28 }, { time: "13:00", value: 24 },
-  { time: "14:00", value: 18 }, { time: "15:00", value: 22 },
-  { time: "16:00", value: 27 }, { time: "17:00", value: 31 },
-];
+const humidityData = history
+  .filter((r) => r.humidity != null)
+  .map((r) => ({ time: new Date(r.timestamp).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}), value: r.humidity }));
 
-const riskData = [
-  { time: "06:00", value: 12 }, { time: "07:00", value: 18 },
-  { time: "08:00", value: 24 }, { time: "09:00", value: 35 },
-  { time: "10:00", value: 45 }, { time: "11:00", value: 58 },
-  { time: "12:00", value: 69 }, { time: "13:00", value: 78 },
-  { time: "14:00", value: 87 }, { time: "15:00", value: 82 },
-  { time: "16:00", value: 73 }, { time: "17:00", value: 64 },
-];
+const riskData = history
+  .filter((r) => r.risk?.score != null)
+  .map((r) => ({ time: new Date(r.timestamp).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}), value: r.risk.score }));
 
 const alerts = [
   {
     id: 1,
     level: "HIGH" as RiskLevel,
-    message: "HIGH FIRE RISK DETECTED",
+    message: "HIGH FLOOD RISK DETECTED",
     location: "Monitoring Zone A — Sector 4",
     temp: 39,
     humidity: 18,
@@ -179,7 +164,7 @@ function RiskGauge({ value, level }: { value: number; level: RiskLevel }) {
         {/* Center value */}
         <text x="100" y="96" textAnchor="middle" fill={color}
           style={{ fontFamily: "var(--font-display)", fontSize: "18px", fontWeight: 700 }}>
-          FIRE RISK
+          FLOOD RISK
         </text>
         {/* Labels */}
         <text x="8" y="110" fill="rgba(34,197,94,0.6)"
@@ -194,7 +179,7 @@ function RiskGauge({ value, level }: { value: number; level: RiskLevel }) {
 }
 
 // ─── Map Component ────────────────────────────────────────────────────────────
-function ForestMap() {
+function HazardMap() {
   return (
     <div className="relative w-full rounded-xl overflow-hidden" style={{ height: 320, background: "linear-gradient(135deg, #d1fae5 0%, #bbf7d0 50%, #dcfce7 100%)" }}>
       {/* Grid overlay */}
@@ -279,7 +264,9 @@ function ForestMap() {
 
       {/* Coordinates */}
       <div className="absolute top-3 left-3 text-[9px] font-mono" style={{ color: "rgba(21,128,61,0.35)" }}>
-        3.1390°N 101.6869°E
+        {reading?.latitude != null && reading?.longitude != null
+          ? `${Number(reading.latitude).toFixed(4)}°N ${Number(reading.longitude).toFixed(4)}°E`
+          : "LOCATION WAITING"}
       </div>
     </div>
   );
@@ -301,15 +288,80 @@ export default function App() {
   const [activePage, setActivePage] = useState<NavPage>("Dashboard");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [temperature] = useState(39);
-  const [humidity] = useState(18);
-  const [fireProbability] = useState(87);
-  const currentRisk: RiskLevel = "HIGH";
+  const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+  const [reading, setReading] = useState<any>(null);
+  const [history, setHistory] = useState<any[]>([]);
+  const [backendOnline, setBackendOnline] = useState(false);
+  const [error, setError] = useState("");
+
+  const temperature = reading?.temperature ?? null;
+  const humidity = reading?.humidity ?? null;
+  const waterLevel = reading?.water_level_cm ?? null;
+  const rainfall = reading?.rainfall_mm ?? null;
+  const rainfallIntensity = reading?.rainfall_intensity_mm_h ?? null;
+  const soilMoisture = reading?.soil_moisture ?? null;
+  const vibration = reading?.vibration ?? null;
+  const fireProbability = reading?.risk?.score ?? 0;
+  const currentRisk: RiskLevel = reading?.risk?.level ?? "LOW";
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+
+    async function loadData() {
+      try {
+        const [latestRes, historyRes] = await Promise.all([
+          fetch(`${API_BASE}/api/v1/latest`),
+          fetch(`${API_BASE}/api/v1/history?hours=24`),
+        ]);
+        if (!latestRes.ok || !historyRes.ok) throw new Error("Backend request failed");
+
+        const latest = await latestRes.json();
+        const historyData = await historyRes.json();
+
+        setReading(latest.data ?? latest);
+        setHistory(Array.isArray(historyData) ? historyData : []);
+        setBackendOnline(true);
+        setError("");
+      } catch (e) {
+        setBackendOnline(false);
+        setError("Backend unavailable — waiting for sensor data");
+      }
+    }
+
+    loadData();
+
+    try {
+      const wsBase = API_BASE.replace(/^http/, "ws");
+      ws = new WebSocket(`${wsBase}/ws`);
+      ws.onopen = () => setBackendOnline(true);
+      ws.onmessage = (event) => {
+        try {
+          const next = JSON.parse(event.data);
+          setReading(next);
+          setHistory((prev) => [...prev, next].slice(-200));
+          setBackendOnline(true);
+          setError("");
+        } catch {
+          // Ignore malformed WebSocket messages.
+        }
+      };
+      ws.onerror = () => setBackendOnline(false);
+      ws.onclose = () => setBackendOnline(false);
+    } catch {
+      setBackendOnline(false);
+    }
+
+    return () => ws?.close();
+  }, [API_BASE]);
+
+  const latestTime = reading?.timestamp
+    ? new Date(reading.timestamp).toLocaleTimeString()
+    : "WAITING";
 
   const navLinks: NavPage[] = ["Dashboard", "Live Monitoring", "Predictions", "Alerts", "About"];
 
@@ -357,7 +409,7 @@ export default function App() {
               </div>
               <div>
                 <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: "16px", color: "#0f2d1a", letterSpacing: "0.03em" }}>
-                  FireWatch<span style={{ color: "#16a34a" }}> AI</span>
+                  FloodWatch<span style={{ color: "#16a34a" }}> AI</span>
                 </div>
                 <div style={{ fontFamily: "var(--font-mono)", fontSize: "9px", color: "rgba(21,128,61,0.45)", letterSpacing: "0.1em" }}>
                   EARLY WARNING SYSTEM
@@ -393,7 +445,9 @@ export default function App() {
                 style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)" }}
               >
                 <div className="w-2 h-2 rounded-full pulse-dot" style={{ background: "#ef4444" }} />
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: "11px", color: "#ef4444" }}>ALERT ACTIVE</span>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: "11px", color: backendOnline ? "#16a34a" : "#ef4444" }}>
+                  {backendOnline ? "LIVE SENSOR FEED" : "BACKEND OFFLINE"}
+                </span>
               </div>
 
               {/* Clock */}
@@ -462,6 +516,11 @@ export default function App() {
 
         {/* ── Main Content ─────────────────────────────────────────────────── */}
         <main className="max-w-screen-xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+          {error && (
+            <div className="rounded-xl px-4 py-3 text-xs" style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", color: "#b91c1c", fontFamily: "var(--font-mono)" }}>
+              {error}
+            </div>
+          )}
 
           {/* ── Hero / Status Banner ─────────────────────────────────────── */}
           <div
@@ -490,12 +549,12 @@ export default function App() {
                   className="text-2xl sm:text-3xl lg:text-4xl font-bold leading-tight"
                   style={{ fontFamily: "var(--font-display)", color: "#0f2d1a", letterSpacing: "-0.01em" }}
                 >
-                  AI-Powered Forest Fire<br />
+                  AI-Powered Flood<br />
                   <span style={{ color: "#16a34a" }}>Early Warning</span> System
                 </h1>
                 <p className="mt-2 text-sm leading-relaxed" style={{ color: "rgba(30,80,50,0.65)", maxWidth: 480 }}>
-                  Real-time environmental monitoring and machine learning–based fire risk prediction.
-                  Powered by Random Forest AI across 2 sensor nodes.
+                  Real-time environmental monitoring and machine learning–based flood risk prediction.
+                  Powered by sensor data across connected ESP32-S3 nodes.
                 </p>
 
                 <div className="mt-4 flex flex-wrap gap-3">
@@ -523,7 +582,7 @@ export default function App() {
                 }}
               >
                 <div style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "rgba(239,68,68,0.6)", letterSpacing: "0.12em", marginBottom: 8 }}>
-                  CURRENT FIRE RISK STATUS
+                  CURRENT FLOOD RISK STATUS
                 </div>
                 <div className="flex items-center gap-3 mb-3">
                   <div
@@ -533,8 +592,8 @@ export default function App() {
                     🔥
                   </div>
                   <div>
-                    <div style={{ fontFamily: "var(--font-display)", fontSize: "28px", fontWeight: 800, color: "#ef4444", lineHeight: 1 }}>
-                      HIGH
+                    <div style={{ fontFamily: "var(--font-display)", fontSize: "28px", fontWeight: 800, color: riskColor(currentRisk), lineHeight: 1 }}>
+                      {currentRisk}
                     </div>
                     <div style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "rgba(239,68,68,0.6)" }}>
                       RISK LEVEL
@@ -543,14 +602,16 @@ export default function App() {
                 </div>
                 <div className="flex items-center justify-between pt-3" style={{ borderTop: "1px solid rgba(239,68,68,0.15)" }}>
                   <span style={{ fontFamily: "var(--font-mono)", fontSize: "11px", color: "rgba(30,80,50,0.5)" }}>AI CONFIDENCE</span>
-                  <span style={{ fontFamily: "var(--font-display)", fontSize: "20px", fontWeight: 700, color: "#ef4444" }}>HIGH</span>
+                  <span style={{ fontFamily: "var(--font-display)", fontSize: "20px", fontWeight: 700, color: riskColor(currentRisk) }}>
+                    {Math.round(fireProbability)}%
+                  </span>
                 </div>
               </div>
             </div>
           </div>
 
           {/* ── Sensor Cards ─────────────────────────────────────────────── */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3 sm:gap-4">
             {/* Temperature */}
             <div
               className="glass glow-fire card-hover rounded-xl p-4 sm:p-5"
@@ -602,6 +663,47 @@ export default function App() {
               </div>
             </div>
 
+            {/* Water Level */}
+            <div className="glass card-hover rounded-xl p-4 sm:p-5" style={{ borderColor: "rgba(59,130,246,0.2)" }}>
+              <div className="flex items-start justify-between mb-3">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg" style={{ background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.2)" }}>🌊</div>
+                <div className="w-2 h-2 rounded-full pulse-dot" style={{ background: "#3b82f6" }} />
+              </div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "rgba(30,80,50,0.5)", letterSpacing: "0.1em", marginBottom: 4 }}>WATER LEVEL</div>
+              <div style={{ fontFamily: "var(--font-display)", fontSize: "32px", fontWeight: 700, color: "#2563eb", lineHeight: 1 }}>
+                {waterLevel == null ? "--" : waterLevel.toFixed(1)}<span style={{ fontSize: "16px", fontWeight: 400 }}> cm</span>
+              </div>
+              <div className="mt-2 text-xs" style={{ color: "rgba(37,99,235,0.65)", fontFamily: "var(--font-mono)" }}>ULTRASONIC SENSOR</div>
+            </div>
+
+            {/* Rainfall */}
+            <div className="glass card-hover rounded-xl p-4 sm:p-5" style={{ borderColor: "rgba(14,165,233,0.2)" }}>
+              <div className="flex items-start justify-between mb-3">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg" style={{ background: "rgba(14,165,233,0.1)", border: "1px solid rgba(14,165,233,0.2)" }}>🌧️</div>
+                <div className="w-2 h-2 rounded-full pulse-dot" style={{ background: "#0ea5e9" }} />
+              </div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "rgba(30,80,50,0.5)", letterSpacing: "0.1em", marginBottom: 4 }}>RAINFALL INTENSITY</div>
+              <div style={{ fontFamily: "var(--font-display)", fontSize: "32px", fontWeight: 700, color: "#0284c7", lineHeight: 1 }}>
+                {rainfallIntensity == null ? "--" : rainfallIntensity.toFixed(1)}<span style={{ fontSize: "16px", fontWeight: 400 }}> mm/h</span>
+              </div>
+              <div className="mt-2 text-xs" style={{ color: "rgba(2,132,199,0.65)", fontFamily: "var(--font-mono)" }}>
+                TOTAL: {rainfall == null ? "--" : rainfall.toFixed(1)} mm
+              </div>
+            </div>
+
+            {/* Soil Moisture */}
+            <div className="glass card-hover rounded-xl p-4 sm:p-5" style={{ borderColor: "rgba(132,204,22,0.2)" }}>
+              <div className="flex items-start justify-between mb-3">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg" style={{ background: "rgba(132,204,22,0.1)", border: "1px solid rgba(132,204,22,0.2)" }}>🌱</div>
+                <div className="w-2 h-2 rounded-full pulse-dot" style={{ background: "#84cc16" }} />
+              </div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "rgba(30,80,50,0.5)", letterSpacing: "0.1em", marginBottom: 4 }}>SOIL MOISTURE</div>
+              <div style={{ fontFamily: "var(--font-display)", fontSize: "32px", fontWeight: 700, color: "#65a30d", lineHeight: 1 }}>
+                {soilMoisture == null ? "--" : soilMoisture.toFixed(1)}<span style={{ fontSize: "16px", fontWeight: 400 }}>%</span>
+              </div>
+              <div className="mt-2 text-xs" style={{ color: "rgba(101,163,13,0.65)", fontFamily: "var(--font-mono)" }}>GROUND SATURATION</div>
+            </div>
+
             {/* Device Status */}
             <div
               className="glass card-hover rounded-xl p-4 sm:p-5"
@@ -619,11 +721,11 @@ export default function App() {
               <div style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "rgba(30,80,50,0.5)", letterSpacing: "0.1em", marginBottom: 4 }}>
                 DEVICE STATUS
               </div>
-              <div style={{ fontFamily: "var(--font-display)", fontSize: "22px", fontWeight: 700, color: "#16a34a", lineHeight: 1.2 }}>
-                ONLINE
+              <div style={{ fontFamily: "var(--font-display)", fontSize: "22px", fontWeight: 700, color: backendOnline ? "#16a34a" : "#ef4444", lineHeight: 1.2 }}>
+                {backendOnline ? "ONLINE" : "OFFLINE"}
               </div>
               <div className="mt-2 text-xs" style={{ color: "rgba(21,128,61,0.45)", fontFamily: "var(--font-mono)" }}>
-                2/2 NODES ACTIVE
+                {reading?.device_id ?? "NO DEVICE"}
               </div>
             </div>
 
@@ -645,7 +747,7 @@ export default function App() {
                 LAST UPDATED
               </div>
               <div style={{ fontFamily: "var(--font-display)", fontSize: "22px", fontWeight: 700, color: "#0f2d1a", lineHeight: 1.2 }}>
-                Just now
+                {latestTime}
               </div>
               <div className="mt-2 text-xs" style={{ color: "rgba(30,80,50,0.4)", fontFamily: "var(--font-mono)" }}>
                 {currentTime.toLocaleTimeString()}
@@ -666,7 +768,7 @@ export default function App() {
                     AI PREDICTION ENGINE
                   </div>
                   <h2 style={{ fontFamily: "var(--font-display)", fontSize: "16px", fontWeight: 700, color: "#0f2d1a", marginTop: 2 }}>
-                    Fire Risk Analysis
+                    Flood Risk Analysis
                   </h2>
                 </div>
                 <div
@@ -686,7 +788,7 @@ export default function App() {
               <div className="space-y-2.5">
                 {[
                   { label: "RISK LEVEL", value: "HIGH", color: "#ef4444" },
-                  { label: "FIRE PROBABILITY", value: "HIGH", color: "#ef4444" },
+                  { label: "FLOOD PROBABILITY", value: "HIGH", color: "#ef4444" },
                   { label: "AI MODEL", value: "Random Forest", color: "#0f2d1a" },
                   { label: "PREDICTION CONFIDENCE", value: "VERY HIGH", color: "#16a34a" },
                   { label: "LAST INFERENCE", value: "14:32:07", color: "rgba(30,80,50,0.65)" },
@@ -712,7 +814,7 @@ export default function App() {
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <div style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "rgba(30,80,50,0.5)", letterSpacing: "0.12em" }}>
-                    FOREST MONITORING NETWORK
+                    FLOOD MONITORING NETWORK
                   </div>
                   <h2 style={{ fontFamily: "var(--font-display)", fontSize: "16px", fontWeight: 700, color: "#0f2d1a", marginTop: 2 }}>
                     Sensor Coverage Map
@@ -723,12 +825,15 @@ export default function App() {
                   <span style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "rgba(21,128,61,0.45)" }}>LIVE FEED</span>
                 </div>
               </div>
-              <ForestMap />
+              <HazardMap />
               <div className="mt-3 grid grid-cols-3 gap-2">
                 {[
-                  { label: "Zone A", risk: "HIGH" as RiskLevel, temp: "39°C", hum: "18%" },
-                  { label: "Zone B", risk: "MEDIUM" as RiskLevel, temp: "34°C", hum: "26%" },
-                  { label: "Zone C", risk: "LOW" as RiskLevel, temp: "27°C", hum: "52%" },
+                  {
+                    label: reading?.device_id ?? "ESP32-S3",
+                    risk: currentRisk,
+                    temp: temperature == null ? "--" : `${temperature.toFixed(1)}°C`,
+                    hum: humidity == null ? "--" : `${humidity.toFixed(1)}%`
+                  },
                 ].map((z) => (
                   <div
                     key={z.label}
@@ -798,13 +903,13 @@ export default function App() {
               </ResponsiveContainer>
             </div>
 
-            {/* Fire Risk Trend */}
+            {/* Flood Risk Trend */}
             <div className="glass card-hover rounded-xl p-5" style={{ borderColor: "rgba(249,115,22,0.15)" }}>
               <div style={{ fontFamily: "var(--font-mono)", fontSize: "9px", color: "rgba(30,80,50,0.4)", letterSpacing: "0.12em", marginBottom: 2 }}>
                 TODAY · ALL ZONES
               </div>
               <h3 style={{ fontFamily: "var(--font-display)", fontSize: "14px", fontWeight: 600, color: "#0f2d1a", marginBottom: 12 }}>
-                Fire Risk Trend
+                Flood Risk Trend
               </h3>
               <ResponsiveContainer width="100%" height={140}>
                 <AreaChart data={riskData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
@@ -927,7 +1032,7 @@ export default function App() {
           {/* Footer */}
           <div className="text-center pb-4">
             <p style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "rgba(21,128,61,0.25)", letterSpacing: "0.1em" }}>
-              FIREWATCH AI v2.4.1 · ESP32 SENSOR NETWORK · RANDOM FOREST ML MODEL · © 2026
+              FLOODWATCH AI · ESP32-S3 SENSOR NETWORK · FLOOD HAZARD MODEL · © 2026
             </p>
           </div>
         </main>
