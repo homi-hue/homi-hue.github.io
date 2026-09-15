@@ -166,7 +166,7 @@ function RiskGauge({ value, level }: { value: number; level: RiskLevel }) {
 }
 
 // ─── Map Component ────────────────────────────────────────────────────────────
-function HazardMap() {
+function HazardMap({ reading }: { reading: any }) {
   return (
     <div className="relative w-full rounded-xl overflow-hidden" style={{ height: 320, background: "linear-gradient(135deg, #d1fae5 0%, #bbf7d0 50%, #dcfce7 100%)" }}>
       {/* Grid overlay */}
@@ -301,7 +301,7 @@ export default function App() {
   const rainfallIntensity = reading?.rainfall_intensity_mm_h ?? null;
   const soilMoisture = reading?.soil_moisture ?? null;
   const vibration = reading?.vibration ?? null;
-  const fireProbability = reading?.risk?.score ?? 0;
+  const floodProbability = reading?.risk?.score ?? 0;
   const currentRisk: RiskLevel = reading?.risk?.level ?? "LOW";
 
   useEffect(() => {
@@ -603,7 +603,7 @@ export default function App() {
                 <div className="flex items-center justify-between pt-3" style={{ borderTop: "1px solid rgba(239,68,68,0.15)" }}>
                   <span style={{ fontFamily: "var(--font-mono)", fontSize: "11px", color: "rgba(30,80,50,0.5)" }}>AI CONFIDENCE</span>
                   <span style={{ fontFamily: "var(--font-display)", fontSize: "20px", fontWeight: 700, color: riskColor(currentRisk) }}>
-                    {Math.round(fireProbability)}%
+                    {Math.round(floodProbability)}%
                   </span>
                 </div>
               </div>
@@ -781,7 +781,7 @@ export default function App() {
 
               {/* Gauge */}
               <div className="flex justify-center mb-4">
-                <RiskGauge value={fireProbability} level={currentRisk} />
+                <RiskGauge value={floodProbability} level={currentRisk} />
               </div>
 
               {/* Stats */}
@@ -789,9 +789,9 @@ export default function App() {
                 {[
                   { label: "RISK LEVEL", value: "HIGH", color: "#ef4444" },
                   { label: "FLOOD PROBABILITY", value: "HIGH", color: "#ef4444" },
-                  { label: "AI MODEL", value: "Random Forest", color: "#0f2d1a" },
-                  { label: "PREDICTION CONFIDENCE", value: "VERY HIGH", color: "#16a34a" },
-                  { label: "LAST INFERENCE", value: "14:32:07", color: "rgba(30,80,50,0.65)" },
+                  { label: "AI MODEL", value: reading?.risk?.model ?? "TinyML", color: "#0f2d1a" },
+                  { label: "PREDICTION CONFIDENCE", value: reading?.risk?.confidence != null ? `${Math.round(Number(reading.risk.confidence) * 100)}%` : "--", color: "#16a34a" },
+                  { label: "LAST INFERENCE", value: latestTime, color: "rgba(30,80,50,0.65)" },
                 ].map((item) => (
                   <div
                     key={item.label}
@@ -825,7 +825,7 @@ export default function App() {
                   <span style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "rgba(21,128,61,0.45)" }}>LIVE FEED</span>
                 </div>
               </div>
-              <HazardMap />
+              <HazardMap reading={reading} />
               <div className="mt-3 grid grid-cols-3 gap-2">
                 {[
                   {
